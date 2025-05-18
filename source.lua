@@ -1,10 +1,12 @@
---// Tide UI Library (Refactored, Animated, Sidebar, Working Tabs)
+--// Tide UI Library (Animated, Sidebar, Working Tabs with Custom Topbar)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local Player = Players.LocalPlayer
+
 local Tide = {}
 
 local Theme = {
@@ -19,17 +21,13 @@ local Theme = {
 
 local function dragify(frame)
     local dragging, dragInput, dragStart, startPos
-
     local function update(input)
         local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+                                    startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
-
     frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             dragStart = input.Position
             startPos = frame.Position
@@ -38,17 +36,11 @@ local function dragify(frame)
             end)
         end
     end)
-
     frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
+        if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
-            update(input)
-        end
+        if input == dragInput and dragging then update(input) end
     end)
 end
 
@@ -57,115 +49,132 @@ function Tide:Init(config)
     local uiName = config.Name or "Tide UI"
     local toggleKey = config.Key or Enum.KeyCode.RightControl
 
-    -- Remove previous instances
-    for _, child in ipairs(CoreGui:GetChildren()) do
-        if child.Name == "TideUI" then child:Destroy() end
+    for _, gui in ipairs(CoreGui:GetChildren()) do
+        if gui.Name == "TideUI" then gui:Destroy() end
     end
 
-    local gui = Instance.new("ScreenGui")
+    local gui = Instance.new("ScreenGui", CoreGui)
     gui.Name = "TideUI"
     gui.ResetOnSpawn = false
-    gui.Parent = CoreGui
 
     local main = Instance.new("Frame", gui)
-    main.Name = "Main"
+    main.BackgroundColor3 = Theme.BackgroundMain
     main.Size = UDim2.new(0, 700, 0, 450)
     main.Position = UDim2.new(0.5, -350, 0.5, -225)
     main.AnchorPoint = Vector2.new(0.5, 0.5)
-    main.BackgroundColor3 = Theme.BackgroundMain
+    main.Name = "Main"
     dragify(main)
-    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+    local mainCorner = Instance.new("UICorner", main)
+    mainCorner.CornerRadius = UDim.new(0, 0)
+
+    local topbar = Instance.new("Frame", main)
+    topbar.Size = UDim2.new(1, 0, 0, 36)
+    topbar.BackgroundColor3 = Theme.BackgroundSecondary
+    topbar.Name = "Topbar"
+
+    local topbarCorner = Instance.new("UICorner", topbar)
+    topbarCorner.CornerRadius = UDim.new(1, 8)
+    topbarCorner.Name = "TopbarCorner"
+
+    local title = Instance.new("TextLabel", topbar)
+    title.Text = uiName
+    title.Font = Enum.Font.GothamBold
+    title.TextColor3 = Theme.Text
+    title.TextSize = 16
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -40, 1, 0)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closeButton = Instance.new("TextButton", topbar)
+    closeButton.Text = "✕"
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextColor3 = Theme.Text
+    closeButton.TextSize = 16
+    closeButton.BackgroundTransparency = 1
+    closeButton.Size = UDim2.new(0, 36, 1, 0)
+    closeButton.Position = UDim2.new(1, -36, 0, 0)
+    closeButton.AutoButtonColor = false
+    closeButton.MouseButton1Click:Connect(function()
+        gui:Destroy()
+    end)
 
     local sidebar = Instance.new("Frame", main)
-    sidebar.Size = UDim2.new(0, 160, 1, 0)
-    sidebar.Position = UDim2.new(0, 0, 0, 0)
     sidebar.BackgroundColor3 = Theme.BackgroundSecondary
+    sidebar.Size = UDim2.new(0, 160, 1, -36)
+    sidebar.Position = UDim2.new(0, 0, 0, 36)
     Instance.new("UICorner", sidebar).CornerRadius = UDim.new(0, 8)
 
-    local tabLayout = Instance.new("UIListLayout", sidebar)
-    tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    tabLayout.Padding = UDim.new(0, 4)
-    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    local tabButtonsLayout = Instance.new("UIListLayout", sidebar)
+    tabButtonsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    tabButtonsLayout.Padding = UDim.new(0, 4)
+    tabButtonsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
     local contentHolder = Instance.new("Frame", main)
-    contentHolder.Size = UDim2.new(1, -160, 1, 0)
-    contentHolder.Position = UDim2.new(0, 160, 0, 0)
     contentHolder.BackgroundColor3 = Theme.BackgroundSecondary
+    contentHolder.Size = UDim2.new(1, -160, 1, -36)
+    contentHolder.Position = UDim2.new(0, 160, 0, 36)
     Instance.new("UICorner", contentHolder).CornerRadius = UDim.new(0, 8)
 
     local tabs = {}
-    local activeTab
+    local activeTab = nil
 
     local Window = {}
 
     function Window:AddTab(tabName)
         local Tab = {}
 
-        local tabButton = Instance.new("TextButton", sidebar)
-        tabButton.Text = tabName
-        tabButton.Size = UDim2.new(1, -20, 0, 40)
-        tabButton.BackgroundColor3 = Theme.Accent
-        tabButton.TextColor3 = Theme.Text
-        tabButton.Font = Enum.Font.GothamBold
-        tabButton.TextSize = 16
-        tabButton.AutoButtonColor = false
-        Instance.new("UICorner", tabButton).CornerRadius = UDim.new(0, 6)
+        local button = Instance.new("TextButton", sidebar)
+        button.Text = tabName
+        button.Size = UDim2.new(1, -20, 0, 40)
+        button.BackgroundColor3 = Theme.Accent
+        button.TextColor3 = Theme.Text
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 16
+        button.AutoButtonColor = false
+        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
 
-        tabButton.MouseEnter:Connect(function()
-            TweenService:Create(tabButton, TweenInfo.new(0.2), {
+        button.MouseEnter:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.2), {
                 BackgroundColor3 = Theme.AccentHover
             }):Play()
         end)
-
-        tabButton.MouseLeave:Connect(function()
-            TweenService:Create(tabButton, TweenInfo.new(0.2), {
+        button.MouseLeave:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.2), {
                 BackgroundColor3 = Theme.Accent
             }):Play()
         end)
 
-        local tabContainer = Instance.new("Frame", contentHolder)
-        tabContainer.Size = UDim2.new(1, 0, 1, 0)
-        tabContainer.BackgroundTransparency = 1
-        tabContainer.Visible = false
+        local container = Instance.new("Frame", contentHolder)
+        container.Visible = false
+        container.Size = UDim2.new(1, 0, 1, 0)
+        container.BackgroundTransparency = 1
 
-        local layout = Instance.new("UIListLayout", tabContainer)
+        local layout = Instance.new("UIListLayout", container)
         layout.Padding = UDim.new(0, 8)
         layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-        tabButton.MouseButton1Click:Connect(function()
+        button.MouseButton1Click:Connect(function()
             if activeTab then activeTab.Visible = false end
-            tabContainer.Visible = true
-            activeTab = tabContainer
+            container.Visible = true
+            activeTab = container
         end)
 
         function Tab:AddButton(text, callback)
-            local button = Instance.new("TextButton", tabContainer)
-            button.Text = text
+            local button = Instance.new("TextButton", container)
             button.Size = UDim2.new(1, -20, 0, 30)
             button.Position = UDim2.new(0, 10, 0, 0)
             button.BackgroundColor3 = Theme.Accent
-            button.TextColor3 = Theme.Text
+            button.TextColor3 = Color3.new(1, 1, 1)
             button.Font = Enum.Font.Gotham
             button.TextSize = 14
+            button.Text = text
             Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
-
-            button.MouseEnter:Connect(function()
-                TweenService:Create(button, TweenInfo.new(0.2), {
-                    BackgroundColor3 = Theme.AccentHover
-                }):Play()
-            end)
-
-            button.MouseLeave:Connect(function()
-                TweenService:Create(button, TweenInfo.new(0.2), {
-                    BackgroundColor3 = Theme.Accent
-                }):Play()
-            end)
-
             button.MouseButton1Click:Connect(callback)
         end
 
         function Tab:AddToggle(text, default, callback)
-            local frame = Instance.new("Frame", tabContainer)
+            local frame = Instance.new("Frame", container)
             frame.Size = UDim2.new(1, -20, 0, 30)
             frame.BackgroundTransparency = 1
             frame.Position = UDim2.new(0, 10, 0, 0)
@@ -182,8 +191,8 @@ function Tide:Init(config)
             local toggle = Instance.new("TextButton", frame)
             toggle.Size = UDim2.new(0.3, 0, 1, 0)
             toggle.Position = UDim2.new(0.7, 0, 0, 0)
-            toggle.BackgroundColor3 = default and Theme.ToggleOn or Theme.ToggleOff
             toggle.Text = ""
+            toggle.BackgroundColor3 = default and Theme.ToggleOn or Theme.ToggleOff
             Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 6)
 
             local state = default
@@ -196,7 +205,7 @@ function Tide:Init(config)
             end)
         end
 
-        tabs[tabName] = tabContainer
+        tabs[tabName] = container
         return Tab
     end
 
